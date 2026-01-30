@@ -16,15 +16,48 @@ app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 # Snowflake connection
 def get_snowflake_connection():
     """Create Snowflake connection using environment variables"""
-    return snowflake.connector.connect(
-        account=os.environ.get("SNOWFLAKE_ACCOUNT"),
-        user=os.environ.get("SNOWFLAKE_USER"),
-        password=os.environ.get("SNOWFLAKE_PASSWORD"),
-        authenticator=os.environ.get("SNOWFLAKE_AUTHENTICATOR", "snowflake"),
-        warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH"),
-        database=os.environ.get("SNOWFLAKE_DATABASE", "ANALYTICS"),
-        schema=os.environ.get("SNOWFLAKE_SCHEMA", "DBT_PRODUCTION"),
-    )
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import serialization
+
+    authenticator = os.environ.get("SNOWFLAKE_AUTHENTICATOR", "snowflake")
+
+    # Base connection parameters
+    conn_params = {
+        "account": os.environ.get("SNOWFLAKE_ACCOUNT"),
+        "user": os.environ.get("SNOWFLAKE_USER"),
+        "warehouse": os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH"),
+        "database": os.environ.get("SNOWFLAKE_DATABASE", "ANALYTICS"),
+        "schema": os.environ.get("SNOWFLAKE_SCHEMA", "DBT_PRODUCTION"),
+    }
+
+    # JWT authentication (keypair)
+    if authenticator == "SNOWFLAKE_JWT":
+        private_key_content = os.environ.get("SNOWFLAKE_PRIVATE_KEY")
+        if not private_key_content:
+            raise ValueError("SNOWFLAKE_PRIVATE_KEY environment variable is required for JWT auth")
+
+        # Load private key
+        private_key = serialization.load_pem_private_key(
+            private_key_content.encode(),
+            password=None,
+            backend=default_backend()
+        )
+
+        # Get private key bytes for Snowflake
+        pkb = private_key.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+
+        conn_params["private_key"] = pkb
+        conn_params["authenticator"] = "SNOWFLAKE_JWT"
+    else:
+        # Password authentication
+        conn_params["password"] = os.environ.get("SNOWFLAKE_PASSWORD")
+        conn_params["authenticator"] = authenticator
+
+    return snowflake.connector.connect(**conn_params)
 
 
 def parse_am_name(text):
